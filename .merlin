@@ -1,4 +1,4 @@
-PKG mirage mirage-types mirage-logs
+PKG mirage mirage-types mirage-logs tls
 S .
 B ./_build
 REC

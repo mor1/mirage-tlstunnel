@@ -28,51 +28,20 @@ let haproxy1 =
   in
   Key.(create "haproxy1" Arg.(opt bool false doc))
 
-(* can't create devices from parameters at present; cf
-     https://github.com/mirage/mirage/issues/571#issuecomment-237903266
-
-let certificate =
-  let doc = Key.Arg.info
-      ~docv:"FILE"
-      ~doc:"The full path to PEM encoded certificate chain FILE\
-           \ (may also include the private key)"
-      ["cert"]
-  in
-  Key.(create "cert" Arg.(required ~stage:`Configure string doc))
-
-let privkey =
-  let doc = Key.Arg.info
-      ~docv:"FILE"
-      ~doc:"The full path to PEM encoded unencrypted private key in FILE"
-      ["privkey"]
-  in
-  Key.(create "privkey" Arg.(required ~stage:`Configure string doc))
-
-(** Devices *)
-
-let privkey_disk =
-  match Key.(default @@ value privkey) with
-  | None -> failwith "BAD PRIVKEY! BAD!"
-  | Some file -> generic_kv_ro file
-
-let certificate_disk =
-  match Key.(default @@ value certificate) with
-  | None -> failwith "BAD CERTIFICATE! BAD!"
-  | Some file -> generic_kv_ro file
-*)
-
-let privkey_disk = generic_kv_ro "privkey"
-let certificate_disk = generic_kv_ro "certificate"
+let keys = generic_kv_ro "keys"
 
 (** Go! *)
+
 let main =
+  let packages = [ "tls" ] in
+  let libraries = [ "tls"; "tls.mirage" ] in
+  let deps = [abstract nocrypto] in
   let keys =
     let a = Key.abstract in
     [ a http_ip; a http_port; a https_ip; a https_port; a haproxy1 ]
   in
-  foreign ~keys "Tlstunnel.Main" (clock @-> kv_ro @-> kv_ro @-> job)
+  foreign ~packages ~libraries ~keys ~deps
+    "Tlstunnel.Main" (clock @-> kv_ro @-> job)
 
 let () =
-  register "tlstunnel" [
-    main $ default_clock $ certificate_disk $ privkey_disk
-  ]
+  register "tlstunnel" [ main $ default_clock $ keys ]
