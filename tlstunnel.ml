@@ -60,29 +60,59 @@ let bufsize = 4096
 
 type res = Stop | Continue
 
-module Main (Clock: V1.CLOCK) (Keys: V1_LWT.KV_RO) = struct
+module Main
+    (Clock: V1.CLOCK)
+    (Keys: V1_LWT.KV_RO)
+    (Stack: V1_LWT.STACKV4)
+= struct
 
+  module TLS  = Tls_mirage.Make(Stack.TCPV4)
   module X509 = Tls_mirage.X509(Keys)(Clock)
+  module Https = Cohttp_mirage.Server(TLS)
   module Logs_reporter = Mirage_logs.Make(Clock)
 
-  let start _clock keys _entropy =
+  let rec handler flush tls =
+    Https_log.info (fun f -> f "handler called!") ;
+    TLS.read tls
+    >>= fun res ->
+    flush () >>= fun () -> match res with
+    | `Ok buf ->
+      TLS.write tls buf
+      >>= (function
+          | `Ok _ -> handler flush tls
+          | `Error _ | `Eof as e -> Lwt.return e
+        )
+    | err -> Lwt.return err
 
+  let accept config handler flow =
+    Https_log.info (fun f -> f "accept called!") ;
+    TLS.server_of_flow config flow
+    >>= (function
+        | `Ok tls -> handler (fun () -> Lwt.return_unit) tls
+        | `Error _ | `Eof as e -> Lwt.return e
+      )
+    >>= (function
+        | `Ok _    -> assert false
+        | `Error e ->
+          Https_log.info (fun f -> f "error: %s" (TLS.error_message e)) ;
+          Lwt.return_unit
+        | `Eof     -> Https_log.info (fun f -> f "eof.") ;
+          Lwt.return_unit
+      )
+
+  let start _clock keys stack _entropy =
     Logs.(set_level (Some Info));
     Logs_reporter.(create () |> run) @@ fun () ->
 
+    let http_port = Key_gen.http_port () in
+    Http_log.info (fun f -> f "listening on %d/TCP" http_port) ;
+
     X509.certificate keys `Default
     >>= fun cert ->
-
-    Lwt.return (Tls.Config.server ~certificates:(`Single cert) ())
-    >>= fun cfg ->
-
+    let config = Tls.Config.server ~certificates:(`Single cert) () in
     let https_port = Key_gen.https_port () in
-    let _tls = `TLS (cfg, `TCP https_port) in
-    Https_log.info (fun f -> f "listening on %d/TCP" https_port);
+    Https_log.info (fun f -> f "listening on %d/TCP" https_port) ;
 
-    let http_port = Key_gen.http_port () in
-    let _tcp = `TCP http_port in
-    Http_log.info (fun f -> f "listening on %d/TCP" http_port);
-
-    Lwt.return_unit
+    Stack.listen_tcpv4 stack ~port:https_port (accept config handler) ;
+    Stack.listen stack
 end
