@@ -34,8 +34,8 @@ let stack = generic_stackv4 default_console tap0
 (** Go! *)
 
 let main =
-  let packages = [ "tls"; "mirage-http" ] in
-  let libraries = [ "tls"; "tls.mirage"; "mirage-http" ] in
+  let packages = [ "tls" ] in
+  let libraries = [ "tls"; "tls.mirage" ] in
   let deps = [abstract nocrypto] in
   let keys =
     let a = Key.abstract in
