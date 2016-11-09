@@ -79,7 +79,7 @@ module Main
 
     TLS.server_of_flow config flow >>= function
     | `Ok tls  ->
-      infos ("ok: "^(tls_info tls)) ;
+      infos ("connect: "^(tls_info tls)) ;
       tls_handler infos errors plain tls >>= fun () -> TLS.close tls
     | `Error e -> errors ("error: "^(TLS.error_message e)) ; TCP.close flow
     | `Eof     -> infos "eof." ; TCP.close flow
