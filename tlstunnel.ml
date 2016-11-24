@@ -22,15 +22,19 @@ module Main
       (fun f -> f "HTTPS [%s:%d] %s" (Ipaddr.V4.to_string peer) port s)
   let errors peer port s = Https_log.err
       (fun f -> f "HTTPS [%s:%d] error: %s" (Ipaddr.V4.to_string peer) port s)
+ let debugs peer port s = Https_log.debug
+      (fun f -> f "HTTPS [%s:%d] error: %s" (Ipaddr.V4.to_string peer) port s)
 
   let info peer port s = Http_log.info
       (fun f -> f "HTTP [%s:%d] %s" (Ipaddr.V4.to_string peer) port s)
   let error peer port s = Http_log.err
       (fun f -> f "HTTP [%s:%d] error: %s" (Ipaddr.V4.to_string peer) port s)
+ let debug peer port s = Https_log.debug
+      (fun f -> f "HTTP [%s:%d] error: %s" (Ipaddr.V4.to_string peer) port s)
 
   type rd_wr_result = Stop | Continue
 
-  let rec read_write info error plain tls =
+  let rec read_write info error debug plain tls =
     info "read_write" ;
 
     let inbound =
@@ -38,22 +42,30 @@ module Main
       >>= (function
           | `Ok buf -> (
               let buflen = Cstruct.len buf in
-              info ("read "^(string_of_int buflen)^" bytes\nbuf:\n"
-                    ^(Cstruct.to_string buf)) ;
+              info ("inbound read "^(string_of_int buflen)^" bytes") ;
+              debug ("inbound buf:\n"^(Cstruct.to_string buf)) ;
               if      buflen = 0 then Lwt.return Continue
               else if buflen < 0 then Lwt.return Stop
               else (* buflen > 0 *) (
                 TCP.write plain buf
                 >>= function
                 | `Ok () ->
-                  info ("wrote "^(string_of_int buflen)^" bytes") ;
+                  info ("inbound wrote "^(string_of_int buflen)^" bytes") ;
                   Lwt.return Continue
-                | `Error e -> error (TCP.error_message e) ; Lwt.return Stop
-                | `Eof -> info "write eof." ; Lwt.return Stop
+                | `Error e ->
+                  error ("inbound write: "^TCP.error_message e) ;
+                  Lwt.return Stop
+                | `Eof ->
+                  info "inbound write: EOF." ;
+                  Lwt.return Stop
               )
             )
-          | `Error e -> error (TLS.error_message e) ; Lwt.return Stop
-          | `Eof -> info "read eof." ; Lwt.return Stop
+          | `Error e ->
+            error ("inbound read: "^TLS.error_message e) ;
+            Lwt.return Stop
+          | `Eof ->
+            info "inbound read: EOF." ;
+            Lwt.return Stop
         )
     in
 
@@ -62,22 +74,30 @@ module Main
       >>= (function
           | `Ok buf -> (
               let buflen = Cstruct.len buf in
-              info ("read "^(string_of_int buflen)^" bytes\nbuf:\n"
-                    ^(Cstruct.to_string buf)) ;
+              info ("outbound read "^(string_of_int buflen)^" bytes");
+              debug ("outbound buf:\n"^(Cstruct.to_string buf)) ;
               if      buflen = 0 then Lwt.return Continue
               else if buflen < 0 then Lwt.return Stop
               else (* buflen > 0 *) (
                 TLS.write tls buf
                 >>= function
                 | `Ok () ->
-                  info ("wrote "^(string_of_int buflen)^" bytes") ;
+                  info ("outbound wrote "^(string_of_int buflen)^" bytes") ;
                   Lwt.return Continue
-                | `Error e -> error (TLS.error_message e) ; Lwt.return Stop
-                | `Eof -> info "write eof." ; Lwt.return Stop
+                | `Error e ->
+                  error ("outbound write: "^TLS.error_message e) ;
+                  Lwt.return Stop
+                | `Eof ->
+                  info "outbound write: EOF." ;
+                  Lwt.return Stop
               )
             )
-          | `Error e -> error (TCP.error_message e) ; Lwt.return Stop
-          | `Eof -> info "read eof." ; Lwt.return Stop
+          | `Error e ->
+            error ("outbound read: "^TCP.error_message e) ;
+            Lwt.return Stop
+          | `Eof ->
+            info "outbound read: EOF." ;
+            Lwt.return Stop
         )
     in
 
@@ -89,7 +109,7 @@ module Main
       )
     >>= function
     | Stop -> Lwt.return_unit
-    | Continue -> read_write info error plain tls
+    | Continue -> read_write info error debug plain tls
 
   let tls_info t =
     let v, c =
@@ -107,6 +127,7 @@ module Main
     let peer, port = TCP.get_dest flow in
     let infos s = infos peer port s in
     let errors s = errors peer port s in
+    let debugs s = debugs peer port s in
 
     TLS.server_of_flow config flow
     >>= function
@@ -114,7 +135,7 @@ module Main
       infos ("connect: "^(tls_info tls)) ;
       to_plain ()
       >>= fun plain ->
-      read_write infos errors plain tls
+      read_write infos errors debugs plain tls
       >>= fun () ->
       TLS.close tls
     | `Error e -> errors ("error: "^(TLS.error_message e)) ; TCP.close flow
