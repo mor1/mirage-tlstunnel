@@ -3,19 +3,19 @@ open Mirage
 (** Keys *)
 
 let http_ip =
-  let doc = Key.Arg.info ~doc:"Listening HTTP IP address." ["http_ip"] in
+  let doc = Key.Arg.info ~doc:"Listening HTTP IP address." ["http-ip"] in
   Key.(create "http_ip" Arg.(opt string "127.0.0.1" doc))
 
 let http_port =
-  let doc = Key.Arg.info ~doc:"Listening HTTP port." ["http_port"] in
+  let doc = Key.Arg.info ~doc:"Listening HTTP port." ["http-port"] in
   Key.(create "http_port" Arg.(opt int 8080 doc))
 
 let https_ip =
-  let doc = Key.Arg.info ~doc:"Listening HTTPS IP address." ["https_ip"] in
+  let doc = Key.Arg.info ~doc:"Listening HTTPS IP address." ["https-ip"] in
   Key.(create "https_ip" Arg.(opt string "0.0.0.0" doc))
 
 let https_port =
-  let doc = Key.Arg.info ~doc:"Listening HTTPS port." ["https_port"] in
+  let doc = Key.Arg.info ~doc:"Listening HTTPS port." ["https-port"] in
   Key.(create "https_port" Arg.(opt int 4433 doc))
 
 let haproxy1 =

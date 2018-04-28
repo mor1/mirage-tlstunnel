@@ -1,10 +1,20 @@
 open Lwt.Infix
 
-let http_src = Logs.Src.create "tlstunnel/http" ~doc:"TLS Tunnel: HTTP"
-module Http_log = (val Logs.src_log http_src : Logs.LOG)
+let src = Logs.Src.create "tlstunnel" ~doc:"TlsTunnel"
+module Log = (val Logs.src_log src : Logs.LOG)
 
-let https_src = Logs.Src.create "tlstunnel/https" ~doc:"TLS Tunnel: HTTPS"
-module Https_log = (val Logs.src_log https_src : Logs.LOG)
+let info addr port ff =
+  let pp_peer ppf (addr,port) =
+    Format.fprintf ppf "%s/%d" (Ipaddr.V4.to_string addr) port
+  in
+  let stamp_tag : (Ipaddr.V4.t * int) Logs.Tag.def =
+    Logs.Tag.def "peer" ~doc:"Connected peer" pp_peer
+  in
+  let tag addr port = Logs.Tag.(empty |> add stamp_tag (addr,port)) in
+  Log.info (fun f -> f ff ~tag:(tag addr port))
+
+let debug _ = ()
+let error _ = ()
 
 module Main
     (Clock: V1.CLOCK)
@@ -18,23 +28,9 @@ module Main
   module TLS = Tls_mirage.Make(TCP)
   module X509 = Tls_mirage.X509(Keys)(Clock)
 
-  let infos peer port s = Https_log.info
-      (fun f -> f "HTTPS [%s:%d] %s" (Ipaddr.V4.to_string peer) port s)
-  let errors peer port s = Https_log.err
-      (fun f -> f "HTTPS [%s:%d] error: %s" (Ipaddr.V4.to_string peer) port s)
- let debugs peer port s = Https_log.debug
-      (fun f -> f "HTTPS [%s:%d] error: %s" (Ipaddr.V4.to_string peer) port s)
-
-  let info peer port s = Http_log.info
-      (fun f -> f "HTTP [%s:%d] %s" (Ipaddr.V4.to_string peer) port s)
-  let error peer port s = Http_log.err
-      (fun f -> f "HTTP [%s:%d] error: %s" (Ipaddr.V4.to_string peer) port s)
- let debug peer port s = Https_log.debug
-      (fun f -> f "HTTP [%s:%d] error: %s" (Ipaddr.V4.to_string peer) port s)
-
   type rd_wr_result = Stop | Continue
 
-  let rec read_write info error debug plain tls =
+  let rec read_write info plain tls =
     info "read_write" ;
 
     let inbound =
