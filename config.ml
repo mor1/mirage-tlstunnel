@@ -29,20 +29,19 @@ let haproxy1 =
   Key.(create "haproxy1" Arg.(opt bool false doc))
 
 let keys = generic_kv_ro "keys"
-let stack = generic_stackv4 default_console tap0
+let stack = generic_stackv4 default_network
 
 (** Go! *)
 
 let main =
-  let packages = [ "tls" ] in
-  let libraries = [ "tls"; "tls.mirage" ] in
-  let deps = [abstract nocrypto] in
+  let packages = [ package ~sublibs:["mirage"] "tls" ] in
+  let deps = [ abstract nocrypto ] in
   let keys =
     let a = Key.abstract in
     [ a http_ip; a http_port; a https_ip; a https_port; a haproxy1 ]
   in
-  foreign ~packages ~libraries ~keys ~deps
-    "Tlstunnel.Main" (clock @-> kv_ro @-> stackv4 @-> job)
+  foreign ~packages ~keys ~deps
+    "Tlstunnel.Main" (pclock @-> kv_ro @-> stackv4 @-> job)
 
 let () =
-  register "tlstunnel" [ main $ default_clock $ keys $ stack ]
+  register "tlstunnel" [ main $ default_posix_clock $ keys $ stack ]
