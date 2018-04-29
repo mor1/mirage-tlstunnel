@@ -1,3 +1,7 @@
-PKG lwt mirage-types-lwt mirage-logs tls
+PKG lwt
+PKG mirage
+PKG mirage-logs
+PKG mirage-types-lwt
+PKG tls
 S .
 B ./_build
