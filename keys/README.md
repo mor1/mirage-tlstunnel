@@ -2,12 +2,14 @@
 
 To generate self-signed cert for testing:
 
-> mkdir keys && cd keys
-> openssl req -new -key server.key -out server.req
-> openssl x509 -req -days 30 -in request.pem -signkey server.key -out server.pem
-> openssl x509 -req -days 30 -in server.req -signkey server.key -out server.pem
+```bash
+openssl genrsa -out server.key 2048
+openssl rsa -in server.key -out server.key
+openssl req -sha256 -new -key server.key -out server.csr -subj '/CN=localhost'
+openssl x509 -req -sha256 -days 30 -in server.csr -signkey server.key -out server.crt
+cat server.crt server.key > server.pem
+```
 
-...will create the certificate `server.pem` and the key `server.key` in
-subdirectory `keys`, the defaults expected by `X509.certificate keys ``Default`
-after being crunched to a `KV_RO`.
-
+...will create the certificate `server.pem` and the key `server.key`, the
+defaults expected by `X509.certificate keys ``Default` after being crunched to
+a `KV_RO`.
