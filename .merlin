@@ -1,4 +1,3 @@
-PKG mirage mirage-types mirage-logs mirage-unix mirage-console mirage-http
-PKG functoria lwt tls tcpip nocrypto cohttp
+PKG lwt mirage-types-lwt mirage-logs tls
 S .
 B ./_build
