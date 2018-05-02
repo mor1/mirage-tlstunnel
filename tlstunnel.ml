@@ -6,89 +6,74 @@ module Log = (val Logs.src_log src : Logs.LOG)
 
 module Main (Clock: PCLOCK) (Keys: KV_RO) (Stack: STACKV4) = struct
 
-  let https_src = Logs.Src.create "https" ~doc:"HTTPS server"
-  module Https_log = (val Logs.src_log https_src : Logs.LOG)
-
-  let http_src = Logs.Src.create "http" ~doc:"HTTP server"
-  module Http_log = (val Logs.src_log http_src : Logs.LOG)
-
-  module Logs_reporter = Mirage_logs.Make(Clock)
-
   module TCP = Stack.TCPV4
   module TLS = Tls_mirage.Make(TCP)
   module X509 = Tls_mirage.X509(Keys)(Clock)
 
   type rd_wr_result = Stop | Continue
 
-  let rec read_write ~info ~debug ~error plain tls =
-    info "read_write";
+  let stored_tags = Lwt.new_key ()
 
+  let rec read_write plain tls =
+    let tags = Lwt.get stored_tags in
+    Log.info (fun m -> m ?tags "read_write");
     let inbound =
-      TLS.read tls
-      >>= (function
-          | Ok (`Data buf) -> (
-              let buflen = Cstruct.len buf in
-              info (Fmt.strf "inbound read %d bytes" buflen);
-              debug (Fmt.strf "inbound buf:\n%s" (Cstruct.to_string buf));
-              if      buflen = 0 then Lwt.return Continue
-              else if buflen < 0 then Lwt.return Stop
-              else (* buflen > 0 *)
-                TCP.write plain buf
-                >>= function
-                | Ok () ->
-                  info (Fmt.strf "inbound wrote %d bytes" buflen);
-                  Lwt.return Continue
-                | Error e ->
-                  error (Fmt.strf "inbound write: %a" TCP.pp_write_error e);
-                  Lwt.return Stop
-            )
-          | Ok `Eof ->
-            info "inbound read: EOF.";
-            Lwt.return Stop
-          | Error e ->
-            error (Fmt.strf "read error: %a" TLS.pp_error e);
-            Lwt.return Stop
-        )
+      TLS.read tls >>= function
+      | Ok (`Data buf) ->
+        begin
+          let buflen = Cstruct.len buf in
+          Log.info (fun m -> m ?tags "inbound TLS read %d bytes" buflen);
+          Log.debug (fun m -> m ?tags "inbound TLS buf: %s" (Cstruct.to_string buf));
+          if      buflen = 0 then Lwt.return Continue
+          else if buflen < 0 then Lwt.return Stop
+          else (* buflen > 0 *)
+            TCP.write plain buf >>= function
+            | Ok () ->
+              Log.info (fun m -> m ?tags "inbound TCP wrote %d bytes" buflen);
+              Lwt.return Continue
+            | Error e ->
+              Log.err (fun m -> m ?tags "inbound TCP write: %a" TCP.pp_write_error e);
+              Lwt.return Stop
+        end
+      | Ok `Eof ->
+        Log.info (fun m -> m ?tags "inbound TLS read: EOF.");
+        Lwt.return Stop
+      | Error e ->
+        Log.err (fun m -> m ?tags "read TLS error: %a" TLS.pp_error e);
+        Lwt.return Stop
+    and outbound =
+      TCP.read plain >>= function
+      | Ok (`Data buf) ->
+        begin
+          let buflen = Cstruct.len buf in
+          Log.info (fun m -> m ?tags "outbound TCP read %d bytes" buflen);
+          Log.debug (fun m -> m ?tags "outbound TCP buf: %s" (Cstruct.to_string buf));
+          if      buflen = 0 then Lwt.return Continue
+          else if buflen < 0 then Lwt.return Stop
+          else (* buflen > 0 *)
+            TLS.write tls buf >>= function
+            | Ok () ->
+              Log.info (fun m -> m ?tags "outbound TLS wrote %d bytes" buflen);
+              Lwt.return Continue
+            | Error e ->
+              Log.err (fun m -> m ?tags "outbound TLS write: %a" TLS.pp_write_error e);
+              Lwt.return Stop
+        end
+      | Ok `Eof ->
+        Log.info (fun m -> m ?tags "outbound TCP read: EOF.");
+        Lwt.return Stop
+      | Error e ->
+        Log.err (fun m -> m ?tags "outbound read: %a" TCP.pp_error e);
+        Lwt.return Stop
     in
-
-    let outbound =
-      TCP.read plain
-      >>= (function
-          | Ok (`Data buf) -> (
-              let buflen = Cstruct.len buf in
-              info (Fmt.strf "outbound read %d bytes" buflen);
-              debug (Fmt.strf "outbound buf:\n%s" (Cstruct.to_string buf));
-              if      buflen = 0 then Lwt.return Continue
-              else if buflen < 0 then Lwt.return Stop
-              else (* buflen > 0 *)
-                TLS.write tls buf
-                >>= function
-                | Ok () ->
-                  info ("outbound wrote "^(string_of_int buflen)^" bytes");
-                  Lwt.return Continue
-                | Error e ->
-                  error (Fmt.strf "outbound write: %a" TLS.pp_write_error e);
-                  Lwt.return Stop
-            )
-          | Ok `Eof ->
-            info "outbound read: EOF.";
-            Lwt.return Stop
-          | Error e ->
-            error (Fmt.strf "outbound read: %a" TCP.pp_error e);
-            Lwt.return Stop
-        )
-    in
-
     Lwt.catch
       (fun () -> inbound <?> outbound)
-      (function
-        | exn ->
-          info ("tls_rdwr: fail: "^(Printexc.to_string exn));
-          Lwt.return Stop
-      )
-    >>= function
+      (fun exn ->
+         Log.info (fun m -> m ?tags:(Lwt.get stored_tags)
+                      "tls_rdwr: fail: %s" (Printexc.to_string exn));
+         Lwt.return Stop) >>= function
     | Stop -> Lwt.return_unit
-    | Continue -> read_write ~info ~debug ~error plain tls
+    | Continue -> read_write plain tls
 
   let tls_info t =
     let v, c =
@@ -102,67 +87,61 @@ module Main (Clock: PCLOCK) (Keys: KV_RO) (Stack: STACKV4) = struct
     in
     version ^ ", " ^ cipher
 
-  let accept_tls config to_plain flow f =
-    let peer = TCP.dst flow in
-    let pp_peer ppf (addr,port) =
-      Format.fprintf ppf "%s/%d" (Ipaddr.V4.to_string addr) port
+  let add_tag ntag nval =
+    let other = match Lwt.get stored_tags with
+      | None -> Logs.Tag.empty
+      | Some x -> x
     in
+    Logs.Tag.add ntag nval other
 
-    let info  f = Logs.info  @@ fun m -> m "[%a]" pp_peer peer in
-    let debug f = Logs.debug @@ fun m -> m "[%a]" pp_peer peer in
-    let error f = Logs.err   @@ fun m -> m "[%a]" pp_peer peer in
+  let with_tag ntag nval f =
+    Lwt.with_value stored_tags (Some (add_tag ntag nval)) f
 
-    TLS.server_of_flow config flow
-    >>= function
-    | Ok tls ->
-      info (fun f -> f "connect: %a" (tls_info tls));
-      to_plain ()
-      >>= fun plain ->
-      read_write ~info ~debug ~error plain tls
-      >>= fun () ->
-      TLS.close tls
-    | Error e ->
-      error (fun f -> f "%a" TLS.pp_error e);
-      TCP.close flow
+  let peer_tag : (Ipaddr.V4.t * int) Logs.Tag.def =
+    Logs.Tag.def "peer" ~doc:"connection endpoint"
+      Fmt.(pair ~sep:(unit ":") Ipaddr.V4.pp_hum int)
+
+  let accept_tls config to_plain flow =
+    with_tag peer_tag (TCP.dst flow) @@ (fun () ->
+        TLS.server_of_flow config flow >>= function
+        | Ok tls ->
+          Log.info (fun f -> f ?tags:(Lwt.get stored_tags)
+                       "connect: %s" (tls_info tls));
+          to_plain () >>= fun plain ->
+          read_write plain tls >>= fun () ->
+          TCP.close plain >>= fun () ->
+          TLS.close tls
+        | Error e ->
+          Log.err (fun f -> f ?tags:(Lwt.get stored_tags)
+                      "TLS error: %a" TLS.pp_write_error e);
+          TCP.close flow)
 
   let tls_init keys =
-    X509.certificate keys `Default
-
-    >>= fun cert ->
+    X509.certificate keys `Default >>= fun cert ->
     let config = Tls.Config.server ~certificates:(`Single cert) () in
     Lwt.return config
 
-  let start clock keys stack _entropy =
-    Logs.(set_level (Some Info));
-    Logs_reporter.(create clock |> run) @@ fun () ->
-
+  let start _clock keys stack _entropy =
     let http_ip = Key_gen.http_ip () in
     let http_port = Key_gen.http_port () in
-    Http_log.info (fun f -> f "forwarding to [%s]:%d/TCP" http_ip http_port);
-
+    Log.info (fun f -> f "forwarding to [%a]:%d/TCP"
+                 Ipaddr.V4.pp_hum http_ip http_port);
     let to_plain () =
-      let http_ipv4 =
-        Ipaddr.V4.of_string http_ip |> function
-        | None -> failwith ("bad HTTP target IP: "^http_ip)
-        | Some ip -> ip
-      in
-      TCP.create_connection (Stack.tcpv4 stack) (http_ipv4, http_port)
-      >>= (function
-          | Error e ->
-            failwith
-              (Fmt.strf "outbound [%s]:%d %a" http_ip http_port TCP.pp_error e)
-          | Ok flow -> Lwt.return flow
-        )
+      TCP.create_connection (Stack.tcpv4 stack) (http_ip, http_port) >>= function
+      | Error e ->
+        Lwt.fail_with
+          (Fmt.strf "outbound [%a]:%d %a"
+             Ipaddr.V4.pp_hum http_ip http_port TCP.pp_error e)
+      | Ok flow -> Lwt.return flow
     in
-
-    tls_init keys
-
-    >>= fun config ->
-    let https_ip = "0.0.0.0" in
-    let https_port = Key_gen.https_port () in
-    let https_of flow = accept_tls config to_plain flow read_write in
+    tls_init keys >>= fun config ->
+    let https_ip = Key_gen.https_ip ()
+    and https_port = Key_gen.https_port ()
+    in
+    let https_of flow = accept_tls config to_plain flow in
     Stack.listen_tcpv4 stack ~port:https_port https_of;
-    Https_log.info (fun f -> f "listening on [%s]:%d/TCP" https_ip https_port);
+    Log.info (fun f -> f "listening on [%a]:%d/TCP"
+                 Ipaddr.V4.pp_hum https_ip https_port);
     Stack.listen stack
 
 end

@@ -4,7 +4,7 @@ open Mirage
 
 let http_ip =
   let doc = Key.Arg.info ~doc:"Listening HTTP IP address." ["http-ip"] in
-  Key.(create "http_ip" Arg.(opt string "127.0.0.1" doc))
+  Key.(create "http_ip" Arg.(opt ipv4_address Ipaddr.V4.localhost doc))
 
 let http_port =
   let doc = Key.Arg.info ~doc:"Listening HTTP port." ["http-port"] in
@@ -12,7 +12,7 @@ let http_port =
 
 let https_ip =
   let doc = Key.Arg.info ~doc:"Listening HTTPS IP address." ["https-ip"] in
-  Key.(create "https_ip" Arg.(opt string "0.0.0.0" doc))
+  Key.(create "https_ip" Arg.(opt ipv4_address Ipaddr.V4.any doc))
 
 let https_port =
   let doc = Key.Arg.info ~doc:"Listening HTTPS port." ["https-port"] in
@@ -26,7 +26,7 @@ let haproxy1 =
         \ see http://www.haproxy.org/download/1.5/doc/proxy-protocol.txt)"
       ["haproxy1"]
   in
-  Key.(create "haproxy1" Arg.(opt bool false doc))
+  Key.(create "haproxy1" Arg.(flag doc))
 
 let keys = generic_kv_ro "keys"
 let stack = generic_stackv4 default_network
